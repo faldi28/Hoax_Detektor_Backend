@@ -8,31 +8,15 @@ import re
 import os
 import sys
 from langdetect import detect, LangDetectException
-import nltk
-from nltk.tokenize import sent_tokenize, word_tokenize
 
 # --- Inisialisasi Aplikasi Flask dan CORS ---
 app = flask.Flask(__name__)
 CORS(app)
 app.config["DEBUG"] = True
 
-# --- (DIPERBAIKI) Mengunduh komponen NLTK yang diperlukan ---
-def setup_nltk():
-    """Memeriksa dan mengunduh resource NLTK 'punkt' jika belum ada."""
-    try:
-        # Cek apakah 'punkt' sudah ada
-        nltk.data.find('tokenizers/punkt')
-        print(">>> Backend: Resource NLTK 'punkt' sudah tersedia.", file=sys.stdout)
-    except LookupError:
-        # Jika tidak ditemukan, unduh resource tersebut
-        print(">>> PERINGATAN: Resource 'punkt' tidak ditemukan. Mencoba mengunduh...", file=sys.stdout)
-        nltk.download('punkt')
-        print(">>> Backend: Resource 'punkt' berhasil diunduh.", file=sys.stdout)
-
-setup_nltk() # Panggil fungsi setup saat server dimulai
-
 
 # --- Konfigurasi dan Pemuatan Model ---
+
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model') 
 model = None
 tokenizer = None
@@ -86,32 +70,17 @@ def truncate_head_tail(text, tokenizer, max_length=512):
         return tokenizer.convert_tokens_to_string(head_tokens + tail_tokens)
     return text
 
-# --- Fungsi Validasi Struktur Artikel ---
-def is_likely_article(text, min_sentences=3, min_avg_words=8):
-    try:
-        sentences = sent_tokenize(text)
-        if len(sentences) < min_sentences:
-            print(f"Backend: Teks ditolak karena jumlah kalimat ({len(sentences)}) < minimum ({min_sentences}).", file=sys.stdout)
-            return False
 
-        total_words = len(word_tokenize(text))
-        avg_words_per_sentence = total_words / len(sentences)
-
-        if avg_words_per_sentence < min_avg_words:
-            print(f"Backend: Teks ditolak karena rata-rata kata per kalimat ({avg_words_per_sentence:.2f}) < minimum ({min_avg_words}).", file=sys.stdout)
-            return False
-            
-        print("Backend: Teks lolos validasi struktur artikel.", file=sys.stdout)
-        return True
-    except Exception as e:
-        print(f"Backend: Error saat validasi artikel: {e}", file=sys.stderr)
-        return False
-
-# --- Fungsi Prediksi ---
+# --- Fungsi Prediksi (DIPERBARUI) ---
 def predict(text):
+    """
+    Fungsi ini sekarang hanya fokus pada pra-pemrosesan dan prediksi,
+    karena validasi panjang teks sudah dilakukan oleh pemanggil (predict_api).
+    """
     if not is_model_loaded:
         return {"error_code": "MODEL_ERROR", "message": "Model tidak dapat dimuat di server."}, 503
 
+    # Pra-pemrosesan tetap dilakukan di sini
     processed_text = preprocess_for_bert(text)
     final_text = truncate_head_tail(processed_text, tokenizer)
 
@@ -157,9 +126,12 @@ def predict_api():
     if not text_to_predict or not isinstance(text_to_predict, str):
         return jsonify({"error_code": "INVALID_TEXT", "message": "Input 'text' tidak boleh kosong."}), 400
 
+    # --- (BARU) VALIDASI JUMLAH KATA DILAKUKAN DI AWAL ---
+    # Memeriksa jumlah kata pada teks mentah sebelum pra-pemrosesan.
     if len(text_to_predict.split()) < 50:
         return jsonify({"error_code": "TEXT_TOO_SHORT", "message": "Konten teks terlalu pendek untuk dianalisis sebagai berita."}), 400
 
+    # --- VALIDASI BAHASA ---
     try:
         language = detect(text_to_predict)
         if language != 'id':
@@ -167,10 +139,9 @@ def predict_api():
     except LangDetectException:
         return jsonify({"error_code": "LANGUAGE_UNKNOWN", "message": "Bahasa dari teks tidak dapat dideteksi."}), 400
     
-    if not is_likely_article(text_to_predict):
-        return jsonify({"error_code": "NOT_AN_ARTICLE", "message": "Konten tidak tampak seperti artikel berita yang koheren."}), 400
-    
+    # --- PROSES PREDIKSI ---
     try:
+        # Memanggil fungsi predict yang sudah disederhanakan
         result, status_code = predict(text_to_predict)
         return jsonify(result), status_code
     except Exception as e:
@@ -179,3 +150,6 @@ def predict_api():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+    print("Backend: Server Flask berjalan pada port 5000.", file=sys.stdout)
+    if not is_model_loaded:
+        print("backend: Peringatan: Model tidak dimuat, server berjalan dnegan fungsionalitas terbatas.", file=sys.stdout)
