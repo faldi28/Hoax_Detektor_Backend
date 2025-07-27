@@ -8,16 +8,26 @@ import re
 import os
 import sys
 from langdetect import detect, LangDetectException
+import nltk
+from nltk.tokenize import sent_tokenize, word_tokenize
 
 # --- Inisialisasi Aplikasi Flask dan CORS ---
 app = flask.Flask(__name__)
 CORS(app)
 app.config["DEBUG"] = True
 
+# --- (BARU) Mengunduh komponen NLTK yang diperlukan ---
+# Ini hanya perlu dijalankan sekali saat server pertama kali dimulai.
+try:
+    nltk.data.find('tokenizers/punkt')
+except nltk.downloader.DownloadError:
+    print(">>> Backend: Mengunduh tokenizer 'punkt' dari NLTK...", file=sys.stdout)
+    nltk.download('punkt')
+    print(">>> Backend: Unduhan 'punkt' selesai.", file=sys.stdout)
+
 
 # --- Konfigurasi dan Pemuatan Model ---
-
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model') 
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model')
 model = None
 tokenizer = None
 
@@ -54,8 +64,7 @@ def preprocess_for_bert(text):
         return ""
     text = text.lower()
     text = re.sub(r'http\S+|www\S+|httpsS+', '', text, flags=re.MULTILINE)
-    
-    text = re.sub(r'(.)\1{2,}', r'\1', text) 
+    text = re.sub(r'(.)\1{2,}', r'\1', text)
     text = re.sub(r'([.?,!])', r' \1 ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
@@ -70,22 +79,46 @@ def truncate_head_tail(text, tokenizer, max_length=512):
         return tokenizer.convert_tokens_to_string(head_tokens + tail_tokens)
     return text
 
+# --- (BARU) Fungsi Validasi Struktur Artikel ---
+def is_likely_article(text, min_sentences=3, min_avg_words=8):
+    """
+    Menganalisis apakah teks memiliki struktur seperti artikel.
+    Sebuah artikel seharusnya memiliki beberapa kalimat dengan panjang yang wajar.
+    """
+    try:
+        # Memecah teks menjadi kalimat
+        sentences = sent_tokenize(text)
+        
+        # Cek jumlah kalimat minimum
+        if len(sentences) < min_sentences:
+            print(f"Backend: Teks ditolak karena jumlah kalimat ({len(sentences)}) < minimum ({min_sentences}).", file=sys.stdout)
+            return False
 
-# --- Fungsi Prediksi (DIPERBARUI) ---
+        # Menghitung total kata dan rata-rata panjang kalimat
+        total_words = len(word_tokenize(text))
+        avg_words_per_sentence = total_words / len(sentences)
+
+        # Cek rata-rata kata per kalimat
+        if avg_words_per_sentence < min_avg_words:
+            print(f"Backend: Teks ditolak karena rata-rata kata per kalimat ({avg_words_per_sentence:.2f}) < minimum ({min_avg_words}).", file=sys.stdout)
+            return False
+            
+        print("Backend: Teks lolos validasi struktur artikel.", file=sys.stdout)
+        return True
+    except Exception as e:
+        print(f"Backend: Error saat validasi artikel: {e}", file=sys.stderr)
+        return False # Jika ada error, anggap bukan artikel
+
+# --- Fungsi Prediksi ---
 def predict(text):
-    """
-    Fungsi ini sekarang hanya fokus pada pra-pemrosesan dan prediksi,
-    karena validasi panjang teks sudah dilakukan oleh pemanggil (predict_api).
-    """
     if not is_model_loaded:
         return {"error_code": "MODEL_ERROR", "message": "Model tidak dapat dimuat di server."}, 503
 
-    # Pra-pemrosesan tetap dilakukan di sini
     processed_text = preprocess_for_bert(text)
     final_text = truncate_head_tail(processed_text, tokenizer)
 
     inputs = tokenizer(
-        final_text, 
+        final_text,
         return_tensors="pt",
         max_length=512,
         padding='max_length',
@@ -108,7 +141,7 @@ def predict(text):
     
     return {"prediction": label}, 200
 
-# --- Endpoint API ---
+# --- Endpoint API (DIPERBARUI) ---
 @app.route('/', methods=['GET'])
 def home():
     return "<h1>API Deteksi Hoax</h1><p>Server berjalan. Gunakan endpoint /predict.</p>"
@@ -126,12 +159,9 @@ def predict_api():
     if not text_to_predict or not isinstance(text_to_predict, str):
         return jsonify({"error_code": "INVALID_TEXT", "message": "Input 'text' tidak boleh kosong."}), 400
 
-    # --- (BARU) VALIDASI JUMLAH KATA DILAKUKAN DI AWAL ---
-    # Memeriksa jumlah kata pada teks mentah sebelum pra-pemrosesan.
     if len(text_to_predict.split()) < 50:
         return jsonify({"error_code": "TEXT_TOO_SHORT", "message": "Konten teks terlalu pendek untuk dianalisis sebagai berita."}), 400
 
-    # --- VALIDASI BAHASA ---
     try:
         language = detect(text_to_predict)
         if language != 'id':
@@ -139,9 +169,11 @@ def predict_api():
     except LangDetectException:
         return jsonify({"error_code": "LANGUAGE_UNKNOWN", "message": "Bahasa dari teks tidak dapat dideteksi."}), 400
     
-    # --- PROSES PREDIKSI ---
+    # --- (BARU) Memanggil fungsi validasi struktur artikel ---
+    if not is_likely_article(text_to_predict):
+        return jsonify({"error_code": "NOT_AN_ARTICLE", "message": "Konten tidak tampak seperti artikel berita yang koheren."}), 400
+
     try:
-        # Memanggil fungsi predict yang sudah disederhanakan
         result, status_code = predict(text_to_predict)
         return jsonify(result), status_code
     except Exception as e:
