@@ -65,16 +65,11 @@ def clean_text_minimal(text):
     return text
 
 
-# --- Fungsi Prediksi (DIPERBARUI) ---
+# --- Fungsi Prediksi (Tidak perlu diubah) ---
 def predict(text):
-    """
-    Fungsi ini sekarang hanya fokus pada pra-pemrosesan dan prediksi,
-    karena validasi panjang teks sudah dilakukan oleh pemanggil (predict_api).
-    """
     if not is_model_loaded:
         return {"error_code": "MODEL_ERROR", "message": "Model tidak dapat dimuat di server."}, 503
 
-    # Pra-pemrosesan tetap dilakukan di sini
     processed_text = clean_text_minimal(text)
 
     inputs = tokenizer(
@@ -99,6 +94,7 @@ def predict(text):
     predicted_class_id = probabilities.index(max(probabilities))
     label = "Valid" if predicted_class_id == 1 else "Hoax"
 
+    # Fungsi ini hanya mengembalikan hasil inti prediksi
     return {"prediction": label}, 200
 
 # --- Endpoint API ---
@@ -111,20 +107,20 @@ def predict_api():
     if not is_model_loaded:
         return jsonify({"error_code": "MODEL_UNAVAILABLE", "message": "Model AI tidak tersedia di server saat ini."}), 503
 
-    if not request.json or 'text' not in request.json:
-        return jsonify({"error_code": "INVALID_REQUEST", "message": "Permintaan harus dalam format JSON dan berisi 'text'"}), 400
+    # PERBARUI: Sekarang kita juga butuh 'title' dari request
+    if not request.json or 'text' not in request.json or 'title' not in request.json:
+        return jsonify({"error_code": "INVALID_REQUEST", "message": "Permintaan harus dalam format JSON dan berisi 'text' dan 'title'"}), 400
 
     text_to_predict = request.json['text']
+    # Ambil judul dari request
+    title_from_request = request.json['title']
 
     if not text_to_predict or not isinstance(text_to_predict, str):
         return jsonify({"error_code": "INVALID_TEXT", "message": "Input 'text' tidak boleh kosong."}), 400
 
-    # --- (BARU) VALIDASI JUMLAH KATA DILAKUKAN DI AWAL ---
-    # Memeriksa jumlah kata pada teks mentah sebelum pra-pemrosesan.
     if len(text_to_predict.split()) < 50:
         return jsonify({"error_code": "TEXT_TOO_SHORT", "message": "Konten teks terlalu pendek untuk dianalisis sebagai berita."}), 400
 
-    # --- VALIDASI BAHASA ---
     try:
         language = detect(text_to_predict)
         if language != 'id':
@@ -132,11 +128,25 @@ def predict_api():
     except LangDetectException:
         return jsonify({"error_code": "LANGUAGE_UNKNOWN", "message": "Bahasa dari teks tidak dapat dideteksi."}), 400
 
-    # --- PROSES PREDIKSI ---
     try:
-        # Memanggil fungsi predict yang sudah disederhanakan
+        # Memanggil fungsi predict yang sudah ada
         result, status_code = predict(text_to_predict)
-        return jsonify(result), status_code
+
+        # Jika fungsi predict mengembalikan error, teruskan error tersebut
+        if status_code != 200:
+            return jsonify(result), status_code
+
+        # --- (BARU) Rakit respons akhir di sini ---
+        prediction_label = result.get("prediction")
+        
+        # Buat objek respons akhir yang menyertakan prediksi dan judul
+        final_response = {
+            "prediction": prediction_label,
+            "title": title_from_request 
+        }
+
+        return jsonify(final_response), 200
+        
     except Exception as e:
         print(f"Backend: Error saat prediksi: {e}", file=sys.stderr)
         return jsonify({"error_code": "INTERNAL_SERVER_ERROR", "message": "Terjadi kesalahan internal saat melakukan prediksi."}), 500
@@ -145,4 +155,4 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
     print("Backend: Server Flask berjalan pada port 5000.", file=sys.stdout)
     if not is_model_loaded:
-        print("backend: Peringatan: Model tidak dimuat, server berjalan dengan fungsionalitas terbatas.", file=sys.stdout)
+        print("Backend: Peringatan: Model tidak dimuat, server berjalan dengan fungsionalitas terbatas.", file=sys.stdout)
