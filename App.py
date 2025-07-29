@@ -64,20 +64,42 @@ def clean_text_minimal(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+# (BARU) Fungsi pemotongan teks dari Colab
+def truncate_head_tail(text, tokenizer, max_length=512):
+    """
+    Memotong teks dengan mempertahankan bagian awal (head) dan akhir (tail).
+    Sesuai dengan logika yang digunakan dalam notebook pelatihan.
+    """
+    tokens = tokenizer.tokenize(text)
+    # Kurangi 2 untuk token [CLS] dan [SEP]
+    if len(tokens) > max_length - 2:
+        head_len = 128
+        tail_len = max_length - head_len - 2
+        head_tokens = tokens[:head_len]
+        tail_tokens = tokens[-tail_len:]
+        return tokenizer.convert_tokens_to_string(head_tokens + tail_tokens)
+    return text
 
-# --- Fungsi Prediksi (Tidak perlu diubah) ---
+
+# --- Fungsi Prediksi (Telah Diperbarui) ---
 def predict(text):
     if not is_model_loaded:
         return {"error_code": "MODEL_ERROR", "message": "Model tidak dapat dimuat di server."}, 503
 
-    processed_text = clean_text_minimal(text)
+    # 1. Terapkan pembersihan teks minimal
+    cleaned_text = clean_text_minimal(text)
 
+    # 2. (BARU) Terapkan pemotongan head-and-tail untuk teks panjang
+    # Ini memastikan teks yang sangat panjang dipotong dengan cerdas sebelum tokenisasi
+    truncated_text = truncate_head_tail(cleaned_text, tokenizer)
+
+    # 3. Tokenisasi teks yang sudah diproses dan dipotong
     inputs = tokenizer(
-        processed_text,
+        truncated_text, # Gunakan teks yang sudah dipotong
         return_tensors="pt",
         max_length=512,
         padding='max_length',
-        truncation=True
+        truncation=True # Tetap ada sebagai pengaman jika terjadi kasus tepi
     )
 
     device = model.device
@@ -107,12 +129,10 @@ def predict_api():
     if not is_model_loaded:
         return jsonify({"error_code": "MODEL_UNAVAILABLE", "message": "Model AI tidak tersedia di server saat ini."}), 503
 
-    # PERBARUI: Sekarang kita juga butuh 'title' dari request
     if not request.json or 'text' not in request.json or 'title' not in request.json:
         return jsonify({"error_code": "INVALID_REQUEST", "message": "Permintaan harus dalam format JSON dan berisi 'text' dan 'title'"}), 400
 
     text_to_predict = request.json['text']
-    # Ambil judul dari request
     title_from_request = request.json['title']
 
     if not text_to_predict or not isinstance(text_to_predict, str):
@@ -129,17 +149,14 @@ def predict_api():
         return jsonify({"error_code": "LANGUAGE_UNKNOWN", "message": "Bahasa dari teks tidak dapat dideteksi."}), 400
 
     try:
-        # Memanggil fungsi predict yang sudah ada
+        # Memanggil fungsi predict yang sudah diperbarui
         result, status_code = predict(text_to_predict)
 
-        # Jika fungsi predict mengembalikan error, teruskan error tersebut
         if status_code != 200:
             return jsonify(result), status_code
 
-        # --- (BARU) Rakit respons akhir di sini ---
         prediction_label = result.get("prediction")
         
-        # Buat objek respons akhir yang menyertakan prediksi dan judul
         final_response = {
             "prediction": prediction_label,
             "title": title_from_request 
