@@ -17,7 +17,7 @@ app.config["DEBUG"] = True
 
 # --- Konfigurasi dan Pemuatan Model ---
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model') 
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model')
 model = None
 tokenizer = None
 
@@ -48,26 +48,20 @@ def load_model_and_tokenizer():
 is_model_loaded = load_model_and_tokenizer()
 
 
-# --- Fungsi Pra-pemrosesan (DISESUAIKAN DENGAN COLAB) ---
-def preprocess_for_bert(text):
+# --- Fungsi Pra-pemrosesan ---
+def clean_text_minimal(text):
     if not isinstance(text, str):
         return ""
+    # 1. Ubah ke huruf kecil
     text = text.lower()
-    text = re.sub(r'http\S+|www\S+|httpsS+', '', text, flags=re.MULTILINE)
-    
-    text = re.sub(r'(.)\1{2,}', r'\1', text) 
+    # 2. Hapus URL
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+    # 3. Hapus karakter berulang
+    text = re.sub(r'(.)\1{2,}', r'\1', text)
+    # 4. Beri spasi di antara teks dan tanda baca agar tokenizer bisa membedakannya
     text = re.sub(r'([.?,!])', r' \1 ', text)
+    # 5. Hapus spasi berlebih
     text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-def truncate_head_tail(text, tokenizer, max_length=512):
-    tokens = tokenizer.tokenize(text)
-    if len(tokens) > max_length - 2:
-        head_len = 128
-        tail_len = max_length - head_len - 2
-        head_tokens = tokens[:head_len]
-        tail_tokens = tokens[-tail_len:]
-        return tokenizer.convert_tokens_to_string(head_tokens + tail_tokens)
     return text
 
 
@@ -81,17 +75,16 @@ def predict(text):
         return {"error_code": "MODEL_ERROR", "message": "Model tidak dapat dimuat di server."}, 503
 
     # Pra-pemrosesan tetap dilakukan di sini
-    processed_text = preprocess_for_bert(text)
-    final_text = truncate_head_tail(processed_text, tokenizer)
+    processed_text = clean_text_minimal(text)
 
     inputs = tokenizer(
-        final_text, 
+        processed_text,
         return_tensors="pt",
         max_length=512,
         padding='max_length',
         truncation=True
     )
-    
+
     device = model.device
     input_ids = inputs['input_ids'].to(device)
     attention_mask = inputs['attention_mask'].to(device)
@@ -102,10 +95,10 @@ def predict(text):
         probabilities = F.softmax(logits, dim=1).squeeze()
 
     probabilities = probabilities.cpu().tolist()
-    
+
     predicted_class_id = probabilities.index(max(probabilities))
     label = "Valid" if predicted_class_id == 1 else "Hoax"
-    
+
     return {"prediction": label}, 200
 
 # --- Endpoint API ---
@@ -138,7 +131,7 @@ def predict_api():
             return jsonify({"error_code": "NOT_INDONESIAN", "message": "Teks yang dianalisis harus dalam Bahasa Indonesia."}), 400
     except LangDetectException:
         return jsonify({"error_code": "LANGUAGE_UNKNOWN", "message": "Bahasa dari teks tidak dapat dideteksi."}), 400
-    
+
     # --- PROSES PREDIKSI ---
     try:
         # Memanggil fungsi predict yang sudah disederhanakan
@@ -152,4 +145,4 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
     print("Backend: Server Flask berjalan pada port 5000.", file=sys.stdout)
     if not is_model_loaded:
-        print("backend: Peringatan: Model tidak dimuat, server berjalan dnegan fungsionalitas terbatas.", file=sys.stdout)
+        print("backend: Peringatan: Model tidak dimuat, server berjalan dengan fungsionalitas terbatas.", file=sys.stdout)
