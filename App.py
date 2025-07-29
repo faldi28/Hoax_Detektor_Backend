@@ -48,7 +48,7 @@ def load_model_and_tokenizer():
 is_model_loaded = load_model_and_tokenizer()
 
 
-# --- Fungsi Pra-pemrosesan ---
+# --- Fungsi Pra-pemrosesan (TELAH DIPERBARUI) ---
 def clean_text_minimal(text):
     if not isinstance(text, str):
         return ""
@@ -58,13 +58,14 @@ def clean_text_minimal(text):
     text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
     # 3. Hapus karakter berulang
     text = re.sub(r'(.)\1{2,}', r'\1', text)
-    # 4. Beri spasi di antara teks dan tanda baca agar tokenizer bisa membedakannya
-    text = re.sub(r'([.?,!])', r' \1 ', text)
+    # 4. (DIPERBARUI) Hapus semua tanda baca
+    # Perintah ini akan menghapus semua karakter kecuali huruf, angka, dan spasi.
+    text = re.sub(r'[^\w\s]', '', text)
     # 5. Hapus spasi berlebih
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-# (BARU) Fungsi pemotongan teks dari Colab
+# Fungsi pemotongan teks dari Colab
 def truncate_head_tail(text, tokenizer, max_length=512):
     """
     Memotong teks dengan mempertahankan bagian awal (head) dan akhir (tail).
@@ -81,25 +82,24 @@ def truncate_head_tail(text, tokenizer, max_length=512):
     return text
 
 
-# --- Fungsi Prediksi (Telah Diperbarui) ---
+# --- Fungsi Prediksi ---
 def predict(text):
     if not is_model_loaded:
         return {"error_code": "MODEL_ERROR", "message": "Model tidak dapat dimuat di server."}, 503
 
-    # 1. Terapkan pembersihan teks minimal
+    # 1. Terapkan pembersihan teks (sudah termasuk penghapusan tanda baca)
     cleaned_text = clean_text_minimal(text)
 
-    # 2. (BARU) Terapkan pemotongan head-and-tail untuk teks panjang
-    # Ini memastikan teks yang sangat panjang dipotong dengan cerdas sebelum tokenisasi
+    # 2. Terapkan pemotongan head-and-tail untuk teks panjang
     truncated_text = truncate_head_tail(cleaned_text, tokenizer)
 
     # 3. Tokenisasi teks yang sudah diproses dan dipotong
     inputs = tokenizer(
-        truncated_text, # Gunakan teks yang sudah dipotong
+        truncated_text,
         return_tensors="pt",
         max_length=512,
         padding='max_length',
-        truncation=True # Tetap ada sebagai pengaman jika terjadi kasus tepi
+        truncation=True
     )
 
     device = model.device
@@ -115,8 +115,7 @@ def predict(text):
 
     predicted_class_id = probabilities.index(max(probabilities))
     label = "Valid" if predicted_class_id == 1 else "Hoax"
-
-    # Fungsi ini hanya mengembalikan hasil inti prediksi
+    
     return {"prediction": label}, 200
 
 # --- Endpoint API ---
@@ -149,7 +148,6 @@ def predict_api():
         return jsonify({"error_code": "LANGUAGE_UNKNOWN", "message": "Bahasa dari teks tidak dapat dideteksi."}), 400
 
     try:
-        # Memanggil fungsi predict yang sudah diperbarui
         result, status_code = predict(text_to_predict)
 
         if status_code != 200:
